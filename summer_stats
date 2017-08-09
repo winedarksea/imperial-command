@@ -1,0 +1,81 @@
+#Cancer data, with each entry containing data from a particular US county
+#Cancer data is a mean of 2010-2016, whereas census data is just 2013 (cancer death much more variable/year)
+cancer_data <- read.csv("cancer_reg.csv")
+#Removal of dentified outliers
+cancer_data <- cancer_data[-c(1381, 282), ]
+#Removed PctPrivateCoverageAlone because it had 609 NA's
+cancer_data <- cancer_data[-25]
+#Removed SomeCol because it was mostly NA's
+cancer_data <- cancer_data[-18]
+#Removed binnedInc because it only tells the decile range of the info in medIncome
+cancer_data <- cancer_data[-9]
+#Removing study per cap because a majority of counties have had no studies to compare
+#and because clinical trials will be a response from population, not a predictor of
+cancer_data <- cancer_data[-8]
+#Removing the geographic name to make all data numeric
+cancer_data_num <- cancer_data[-11]
+
+
+#Correlation of Data
+labels(cancer_sample)
+cor(cancer_data_num)
+
+#Sample of Data
+set.seed(1066)
+cancer_sample <- cancer_data_num[sample(nrow(cancer_data_num), 2500), ]
+
+
+# All Subsets Regression to find best predictor variables
+library(leaps)
+attach(cancer_sample)   #make sure you run this
+#Just using demographic data
+leaps<-regsubsets(TARGET_deathRate ~  medIncome + popEst2015 + povertyPercent
+                  + MedianAge + MedianAgeMale + MedianAgeFemale + AvgHouseholdSize
+                  + PercentMarried + PctNoHS18_24 + PctHS18_24 + PctBachDeg18_24 + PctHS25_Over
+                  + PctBachDeg25_Over + PctEmployed16_Over + PctUnemployed16_Over + PctPrivateCoverage
+                  + PctEmpPrivCoverage + PctPublicCoverage + PctPublicCoverageAlone + PctWhite
+                  + PctBlack + PctAsian + PctOtherRace + PctMarriedHouseholds + BirthRate
+                    ,data=cancer_sample,nbest= 1, really.big = T, nvmax = 15) 
+#Curious how allowing in cancer occurence statistics would affect the data
+leaps_wcancer<-regsubsets(TARGET_deathRate ~  medIncome + popEst2015 + povertyPercent
+                  + MedianAge + MedianAgeMale + MedianAgeFemale + AvgHouseholdSize
+                  + PercentMarried + PctNoHS18_24 + PctHS18_24 + PctBachDeg18_24 + PctHS25_Over
+                  + PctBachDeg25_Over + PctEmployed16_Over + PctUnemployed16_Over + PctPrivateCoverage
+                  + PctEmpPrivCoverage + PctPublicCoverage + PctPublicCoverageAlone + PctWhite
+                  + PctBlack + PctAsian + PctOtherRace + PctMarriedHouseholds + BirthRate 
+                  +incidenceRate +avgAnnCount
+                  ,data=cancer_sample,nbest= 1, really.big = T, nvmax = 6) 
+
+# view results
+summary(leap)
+# plot a table of models showing variables in each model.
+# models are ordered by the selection statistic.
+plot(leaps,scale="r2")
+# plot statistic by subset size
+library(car)
+par(mfrow=c(1,1))
+subsets(leaps, statistic="rsq", xlim = range(5:10)) 
+subsets(leaps_wcancer, statistic="rsq", xlim = range(3:6)) 
+
+
+##Cancer.lm
+cancer.lm <- lm(TARGET_deathRate ~ PctHS18_24 + PctMarriedHouseholds +PctEmpPrivCoverage + PctBachDeg25_Over + PctOtherRace + PctPublicCoverageAlone)
+cancer.lm_wcancer <- lm(TARGET_deathRate ~ PctHS18_24 + incidenceRate + PctBachDeg25_Over + povertyPercent)
+library(MASS)
+cancer.lm2 <- rlm(TARGET_deathRate ~ PctBachDeg25_Over + incidenceRate + PctOtherRace + povertyPercent)
+summary(cancer.lm)
+summary(cancer.lm2)
+
+#Check Regression
+par(mfrow=c(2,2))
+plot(cancer.lm)
+plot(cancer.lm2)
+#for more info on the above: http://data.library.virginia.edu/diagnostic-plots/
+#More on Cook's Distance
+d1 <- cooks.distance(cancer.lm)
+r <- stdres(cancer.lm)
+a <- cbind(cancer_sample$TARGET_deathRate, d1, r)
+a[d1 > 4/51, ]
+# Evaluate Collinearity
+vif(cancer.lm) # variance inflation factors
+sqrt(vif(cancer.lm)) > 2 # if True then definitely worry, eh?
