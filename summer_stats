@@ -1,3 +1,5 @@
+#R Code for Linear Regression of combined Cancer and Census Data from DataWorld
+
 #Cancer data, with each entry containing data from a particular US county
 #Cancer data is a mean of 2010-2016, whereas census data is just 2013 (cancer death much more variable/year)
 cancer_data <- read.csv("cancer_reg.csv")
