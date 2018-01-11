@@ -1,3 +1,4 @@
+#Neural Net for 
 #Original Source below, modified to GRU and adapted for data
 #https://machinelearningmastery.com/multivariate-time-series-forecasting-lstms-keras/
 import numpy as np
