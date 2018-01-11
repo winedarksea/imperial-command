@@ -1,0 +1,544 @@
+```{r setup, include=FALSE}
+library(magrittr) 
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(grid)
+library(qdap)
+library(ggbiplot)
+library(caret)
+```
+
+## Goal 
+
+The goal of this analysis is to explore how various features effect consumer search behavior. Above
+this, you will understand the interplay between a keywordâs context and consumersâ search behavior. More
+specifically, you will need to ascertain how the breadth of a keywordâs context might affect consumer
+behavior and keyword performance. In reality, keyword contextual ambiguity can result in both higher
+diversity in ad quality and higher probability of ad irrelevancy. Therefore, how keyword contextual
+ambiguity would affect consumer click behavior is unclear. To explore this question, you are going to use a
+rich dataset from a major search engine to perform a cross-category analysis and examine which of these two
+opposing effects dominates in the context of search advertising.
+
+## Understanding the data 
+
+The keyword level variables are in `keywords.csv`, with the following data dictionary
+
+| Field | Description |
+|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| num_ads | measures the total number of ads produced for a particular keyword | 
+| num_clicks | measures the total number of clicks a particular keyword receives | 
+| num_impressions | denotes the total number of times consumers search for a particular keyword in the dataset | 
+| num_word | denotes the number of words in the keyword |
+| brand | does the keyword refer to a specific brand |
+| location | does the keyword refer to a specific location |
+| log_trans | a measure of transactional intent, measured by the natural log of the frequency of transactional words that appear in the organic results for this keyword |
+| avg_ad_quality | the average quality of ads shown for this keyword, where the quality of an ad is the average click through rate that the ad receives for other keywords |
+| avg_num_ads | measures the average number of competing advertisers during an impression, which denotes the competitive intensity for a keyword |
+|categoryid | id indicating the keyword's product category |
+
+Open the `keywords.csv` data in R 
+
+```{r} 
+
+keywords <- read.csv("keywords.csv")
+keywords$click_through_percent <- round(keywords$num_clicks / keywords$num_impressions * 100, 1)
+keywords$categoryid <- as.factor(keywords$categoryid)
+
+```
+
+## Exploration 
+
+Using the skills you have amassed over the course, visualize and explore the relationship
+between the variables in your data and/or the keywords. Highlight and describe any interesting
+relationships or patterns you discover in the context of this problem. Feel free to transform or compute
+new variables. One variable you are required to create is click through rate (ctr) which is the proportion
+of ad impressions that result in actual clicks.
+
+**I generally think about things by category first**
+*it's just how my brain works*
+```{r dpi = 300}
+category_id_group <- group_by(keywords, categoryid)
+category_averages <- summarize(category_id_group, median_num_ads = median(num_ads), count_keywords = n(), median_impressions = median(num_impressions), variance_ctr = var(click_through_percent), median_clicks = median(num_clicks), median_ctr = median(click_through_percent))
+```
+```{r dpi = 300, fig.width=9, fig.height=9}
+g <- ggplot(category_averages, aes(x = categoryid, y = median_num_ads)) + geom_point()
+g <- g +geom_text(aes(label=categoryid, color = count_keywords), size=7)
+
+g1 <- ggplot(category_averages, aes(x = categoryid, y = median_impressions)) + geom_point()
+g1 <- g1 +geom_text(aes(label=categoryid), size=7)
+
+g2 <- ggplot(category_averages, aes(x = categoryid, y = median_clicks)) + geom_point()
+g2 <- g2 +geom_text(aes(label=categoryid), size=7)
+
+
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 2)))
+define_region <- function(row, col){
+  viewport(layout.pos.row = row, layout.pos.col = col)
+} 
+# Arrange the plots
+print(g, vp=define_region(1, 1:2))
+print(g1, vp = define_region(2, 1))
+print(g2, vp = define_region(2, 2))
+```
+On average it seems that most categories are
+
+#### Highest number of keywords of category in this dataset
+Category 11 -the digital world (computers, software)
+
+#### Top Impressions
+Category 3  -tv shows
+
+#### Fewest Impressions
+Category 12 -disease
+Category 13 -appears to be housing, tools, and furnishings
+Category 19 -books
+
+#### Top Clicks
+Category 2 - cars
+Category 6 - design (birthday cards, computer wallpapers)
+
+#### Fewest Clicks
+Category 7 - government
+```{r dpi=300}
+g0 <- ggplot(category_averages, aes(x = categoryid, y = variance_ctr)) + geom_point() 
+g0 <-  g0 + geom_text(aes(label=categoryid), size=7) + labs(title = "Variance inside Categories for Click-Through")
+g0
+```
+What have we learned?
+Categories are generally consistent but there are a bunch of exceptions. Especially in government, digital, and the mysterious Category 15 (with "chat rooms" "sexy" and "youtube" all mixing together).
+Notably for "government" terms, apparently some have a lot, and some have very little, advertising click through. This makes intuitive sense given the nature of the category: ads for when you are doing a boring search to find local building codes are unlikely to lead to clicks for the most part.
+
+Since this came up in directly, let's see if click through is really as uncorrelated as it seems:
+```{r}
+cor(keywords$num_impressions, keywords$num_clicks)
+```
+Impressions does not correlate well with clicks: the click through rate varies greatly, and correlation is extremely low!
+Which is good, it means that there are opportunities to finesse our ads that could make a big difference.
+
+#### PCA
+
+```{r dpi = 300, fig.height= 3, fig.width=6} 
+library(caret)
+numeric_keywords <-  keywords[,-c(1,2,7,8,13)]
+trans = preProcess(numeric_keywords, 
+                   method=c("BoxCox", "center", 
+                            "scale", "pca"))
+#so yes it says "predict" but really it's just modifying the original data
+PC = predict(trans, numeric_keywords)
+PC1 <- PC
+PC1$keyword <- keywords$query
+
+kyw.pca <- prcomp(numeric_keywords,
+                 center = TRUE,
+                 scale. = TRUE) 
+plot(kyw.pca, type = "l")
+```
+Not a lot of variance explained by the first two PCA's unfortunately...
+```{r dpi = 300, fig.height= 8, fig.width=10} 
+g <- ggbiplot(kyw.pca, obs.scale = 1, var.scale = 1, 
+              groups = keywords$categoryid, ellipse = TRUE, 
+              circle = TRUE)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top')
+g
+```
+That might be cat vomit on your computer screen. Hard to tell the difference between that and this graph.
+Conclusion from that is that rotating the data simply isn't enough to reduce the variance greatly.
+In general, as we will see for the regression, almost all of the variables present yield at least some useful information about the click through rate. This may perhaps be the nature of the dataset: we've only been given data that is useful.
+
+## Modeling 
+
+*I assume you mean linear regression when you say regress?*  That's the implication.
+
+```{r}
+fit <- lm(click_through_percent ~ num_ads + num_word + brand + location + log_trans + avg_ad_quality, data = keywords)
+fit$coefficients
+summary(fit)$sigma
+```
+```{r}
+summary(fit)$r.squared
+```
+That really sucks unfortunately!
+
+Let's try something a little fancier:
+### Linear Regression with Stepwise Selection
+
+```{r, message=FALSE, warning = FALSE}
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 3)
+
+keywordsREG <- keywords
+keywordsREG$query <- NULL
+keywordsREG$querycode <- NULL
+
+```
+(not Rmarkdown because it prints a massive message when run, so I have include = FALSE on the actual.)
+```{}
+linFit <- train(x = keywordsREG[,-c(12)], y = keywordsREG$click_through_percent,
+             method = "lmStepAIC",
+             trControl = fitControl,
+             preProcess = c("center", "scale") )
+
+```
+```{r, include = FALSE}
+linFit <- train(x = keywordsREG[,-c(12)], y = keywordsREG$click_through_percent,
+             method = "lmStepAIC",
+             trControl = fitControl,
+             preProcess = c("center", "scale") )
+
+```
+That show's the error and accuracy which look much better, but let's look at the actual interplay of the variables:
+```{r}
+linFit
+linFit$finalModel
+```
+But what about this... PCA data with simple Linear Regression!
+```{r}
+PCctr <- PC
+PCctr$ctr <- keywords$click_through_percent
+
+fitPCA <- lm(ctr ~ PC1 + PC2 + PC3 + PC4 + PC5, data = PCctr)
+summary(fitPCA)
+```
+Hey, that's actually pretty good accuracy! Good for predictive if we have the need...
+Except it doesn't actually explain anything about individual variables. So the prior response, the linear regression with stepwise selection is probably most informative.
+
+**Interpretation of the results of models **
+So what does my earlier stepwise linear regression have to tell us?
+1. Well more clicks and more impressions both correlate very well with click through... as we had better expect!
+2. Certain categories also seem to correlate pos and negatively with ctr, but I think I have already discussed categories enough.
+3. High ad quality strongly leads to more click through. Expected, but good to have confirmed. Designers are important!
+4. Keywords with more ad competition (avg_ad_num) tend to have more click through. Perhaps a result of marketers pay for ads more often for keywords they know will be effective? Interestingly it's slightly **negatively** correlated with ad quality.
+```{r}
+cor(keywords$avg_ad_quality, keywords$avg_num_ads)
+```
+5. In opposition to the previous, having more ads for a keyword in total actually reduces click through. Perhaps an issue of duplication of ads?
+
+**Turn categoryid into factors, if you have not already, and include this variable into your regression**
+
+Yep, did that already.
+Interestingly, the variables I had alread identified as having the most CTR variance (Cat 7, 11, and 15) are also the highest coefficients here. These were on the middle-upper end for the median number of impressions they gave out, but were not the top. So it seems that these categories are the leaders in CTR, also have lots of variance between keywords. An interesting fact. This suggests that choosing the right keyword for you add can be quite important for ad success even in generally successful categories.
+
+## Topic Modeling 
+One of the major questions of the Target teams is how a keywordâs context (and ambiguity
+thereof) might affect consumer behavior and keyword performance. You will use the recently learned
+algorithm Latent Dirchlet Allocation to discover topics and measure ambiguity.
+
+```{r, include=FALSE}
+# Here are the documentation for packages used in this code:
+#https://cran.r-project.org/web/packages/tm/tm.pdf
+library(tm)
+#https://cran.r-project.org/web/packages/topicmodels/topicmodels.pdf
+library(topicmodels)
+
+# Use the SnowballC package to do stemming.
+library(SnowballC) 
+```
+
+First you must pre-process the text before we run use LDA. 
+```{r} 
+dirname <- file.path(getwd(),"organic_text")
+docs <- Corpus(DirSource(dirname, encoding = "UTF-8"))
+# The following steps pre-process the raw text documents. 
+# Remove punctuations and numbers because they are generally uninformative. 
+docs <- tm_map(docs, removePunctuation)
+docs <- tm_map(docs, removeNumbers)
+# Convert all words to lowercase. 
+docs <- tm_map(docs, content_transformer(tolower))
+# Remove stopwords such as "a", "the", etc. 
+docs <- tm_map(docs, removeWords, stopwords("english"))
+# Use the SnowballC package to do stemming. 
+docs <- tm_map(docs, stemDocument)
+# Remove excess white spaces between words. 
+docs <- tm_map(docs, stripWhitespace)
+# You can inspect the first document to see what it looks like with 
+#docs[[1]]$content
+# Convert all documents to a term frequency matrix. 
+tfm <- DocumentTermMatrix(docs)
+# We can check the dimension of this matrix by calling dim() 
+print(dim(tfm))
+```
+
+Now that we have finished pre-processing the text, we now can execute LDA to discover topics 
+```{r} 
+#run LDA with 20 topics, and use Gibbs sampling as our method for identifying the optimal parameters 
+results <- LDA(tfm, k = 20, method = "Gibbs", control = list(seed = 1234))
+
+# Obtain the top w words (i.e., the w most probable words) for each topic, with the optional requirement that their probability is greater than thresh
+w=10
+thresh = 0.005 
+Terms <- terms(results, w,thresh) 
+#Terms
+```
+```{r dpi=300, fig.height=10, fig.width=10}
+
+topics <- tidy(results, matrix = "beta")
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+
+top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+I already attempted to do this manually above by keywords for some categories, so this is interesting...
+Topics best guesses (some are REALLY HARD to make sense of):
+*THE ORDER SEEMS TO CHANGE EACH TIME THIS IS RUN, MY LIST HERE MAY NOT MATCH ABOVE IN ORDER*
+** actually I may have fixed that by a set seed **
+```{r include = FALSE}
+topics <- 
+("1. people_searches
+2. lifestyle_and_health
+3. cars
+4. directions
+5. stores
+6. general_knowledge_searches
+7. Financial/banking
+8. housing
+9. travel_and_resort
+10. business
+11. software
+12. online_games
+13. digital_content
+14. entertainment/media
+15. music
+16. flights
+17. email
+18. books
+19. clothing
+20. numbers ")
+library(data.table)
+topic_labels <- fread(gsub("(?<=[a-z])\\s+", "\n", topics, perl=TRUE), col.names = c("topic", "name"))
+```
+```{r}
+head(topic_labels, 20)
+```
+```{r} 
+# Obtain the most likely t topic assignments for each document. 
+t=2 
+Topic <- topics(results,t)
+
+#########################
+# Get the posterior probability for each document over each topic 
+posterior <- posterior(results)[[2]]
+
+# look at the posterior topic distribution for the dth document and plot it visually 
+d = 1 
+posterior[d,]
+barplot(posterior[d,])
+
+# Examine the main topic for document d 
+Terms[[which.max(posterior[1,])]]
+
+# Compare the keyword of document d to the terms. keywords$query[d]
+```
+```{r}
+# look at the posterior topic distribution for the 2nd document and plot it visually 
+barplot(posterior[2,])
+# Examine the main topic for document d 
+Terms[[which.max(posterior[2,])]]
+# Compare the keyword of document d to the terms. 
+print(keywords$query[2])
+```
+
+** The consistency between keyword and associated topics is actually rather poor. It seems rather most of the keywords are rather ambiguous**
+
+## Keyword Entropy
+
+\begin{equation*}
+  Entropy(\text{keyword}_i) = - \sum_{t = 1}^{T}{p_{i,t} log(p_{i,t})}
+\end{equation*}
+
+where $p_{i,t}$ is the probability that the organic search text capturing the context of keyword $i$, is
+composed of topic $t$, and $T=20$ in our case of 20 topics. Write a general function to compute entropy,
+given a vector of probabilities (the vector of probabilities should add up to 1).
+```{r} 
+# requires two or more probabilities
+entropy <- function(freqs)
+{
+ -sum(freqs * log2(freqs))
+}
+entropy(c(0.5,0.5))
+
+#Calculates entropy given only one probability, finding the other side by difference from 1.
+# entropy_OF_DOOM <- function(freqs)
+# {
+#   -(freqs* log2(freqs) + (1-freqs)*log2(1-freqs))
+# }
+```
+there's a perfectly good package for this which removes chance of human error!
+```{r include = FALSE}
+rm(entropy)
+library(entropy)
+```
+
+**use this `entropy` function to generate a graph of entropy over the interval $[0,1]$.**
+
+```{r}
+y1 <- entropy(c(0,1))
+y2 <- entropy(c(0.1,0.9))
+y3 <- entropy(c(0.25,0.75))
+y4 <- entropy(c(0.5,0.5))
+y5 <- entropy(c(0.75,0.25))
+y6 <- entropy(c(0.9,0.1))
+y7 <- entropy(c(1,0))
+x <- c(0, 0.1, 0.25, 0.5, 0.75, 0.9, 1)
+entropy <- c(y1,y2,y3,y4,y5,y6,y7)
+plot(x,entropy)
+```
+
+**Entropy measures the amount of information conveyed. It's definitely a bit mind-twisting for me, but the basic premise is that if the probability is 0 or 1, then the outcome is certain, and so there is no information, entropy = 0. If a probability is 50/50 -this is the confusing part- then information is maximal because **.
+
+Create a new column in the keyword data that captures the entropy of each keyword 
+```{r}
+#
+rm(keywordsREG)
+keywordsREG <- keywords
+keywordsREG$query <- NULL
+keywordsREG$querycode <- NULL
+keywordsREG$ctr <- as.numeric(keywordsREG$click_through_percent / 100)
+#keywordsREG$entropy <- entropy_OF_DOOM(keywordsREG$ctr)
+
+for (d in 1:nrow(keywords))
+  {
+    keywords$entropy[[d]] <- entropy(posterior[d,])
+}
+keywordsREG$entropy <- round(keywords$entropy, 3)
+```
+That took forever! Ultimately I just rewrote my original function to just use one probability because I was too stupid to figure out how to combine two columns into one... as a vector. And stackoverflow failed me on that!
+
+Re-run the regressions from above, adding this new entropy measure as an additional independent variable
+(not Rmarkdown because it prints a massive message when run, so I have include = FALSE on the actual.)
+```{}
+linFit2 <- train(x = keywordsREG[,-c(12, 13)], y = keywordsREG$ctr,
+             method = "lmStepAIC",
+             trControl = fitControl,
+             preProcess = c("center", "scale") )
+```
+
+```{r, message=FALSE, warning = FALSE, include= FALSE}
+linFit2 <- train(x = keywordsREG[,-c(12, 14)], y = keywordsREG$ctr,
+             method = "lmStepAIC",
+             trControl = fitControl,
+             preProcess = c("center", "scale") )
+```
+
+```{r}
+linFit2
+```
+
+```{r}
+linFit2$finalModel
+```
+*So that didn't really change anything. Coefficient for entropy is 0.0509643, which, while it managed to make the cut of selection, didn't do much for our R squared or sigma. I suppose you meant apply entropy to my basic Linear Regression and see if it helps there where it might make a significant difference*
+```{r}
+fit2 <- lm(ctr ~ num_word + brand + location + log_trans + avg_ad_quality + entropy, data = keywordsREG)
+fit2$coefficients
+summary(fit2)$sigma
+```
+```{r}
+summary(fit2)$r.squared
+```
+So it did make a major difference to a simple linear regression.
+** Well, it's really not useful when applied to more advanced regression algorithms, but playing along with the homework, it is helpful to the simple linear regression because it favors a maximum entropy (max is 1, coming from 0.5 probability). If probability is 0 or 1, the CTR is certain, thus not providing much information, a fact which the linear regression accounts for, and vice-versa for the high-information 0.5 CTR.**
+
+## Final Analysis and Recommendations
+
+As above, do an exploration and analysis of the specific keyword "target". Also, consider using other
+techniques that you have learned in this course (and other) to gain insights.
+
+```{r}
+keywords[keywords$query == 'target',]
+```
+```{r}
+category_averages[9,]
+```
+```{r}
+posterior["824_target.txt",]
+barplot(posterior["824_target.txt",])
+```
+
+** Target is, unsurprisingly, in the category of 'stores' in the initial keyword list. It compares, er, rather poorly to its competitors in this category. It has well above median number of impressions, but well below average number of clicks. Needless to say their click through rate for their category (3.8%) is very low!**
+** The topics it falls into are business, kids, home furnishings, clothing/fashion. This makes sense for it being Target, the retail store mostly. My assumption here is that when people search for Target they are aiming to go directly to Target.com which at the current time tops the organic results, and they have no need to click on ads here.**
+
+### Considering other keywords
+```{r}
+keywords[keywords$query == 'walmart',]
+```
+
+** While this click through rate for 'walmart' is 17% and well above Target, it is still well below the category median. **
+```{r}
+barplot(posterior["6_walmart.txt",])
+```
+
+** Interestingly this is just categories of Business and Home Furnishings, etc.**
+```{r}
+category_averages[14,-c(3,4)]
+```
+
+but I have thought up a brilliant way to get directly to the answer.
+Let's give it a try!
+```{r}
+
+chapters_gamma <- tidy(results, matrix = "gamma")
+#chapters_gamma
+
+result <- chapters_gamma %>% 
+             group_by(document) %>% slice(which.max(gamma))
+result <- merge(x = result, y = topic_labels, by = "topic")
+
+names(result)[names(result) == 'name']  <- "Leading_Topic"
+
+
+result$document <- unlist(genXtract(result$document, "_", "."))
+result <- merge(x = result, y = keywords[,c(2,13,14,15)], by.x = "document", by.y = "query")
+
+subset <- result[result$categoryid == 13,]
+subset <- subset[subset$Leading_Topic == "stores",]
+names(subset)[names(subset) == 'document']  <- "Keyword"
+names(subset)[names(subset) == 'click_through_percent']  <- "CTR"
+
+head(subset[order(-subset$CTR),], 20)
+```
+Hurray! That took me *FOREVER* to figure out! I could find even more possible products for target to target by using different category and topic searches instead of just category = 13 (home furnishing) and topic = "store". However, understandably I believe this is sufficient for demonstration purposes.
+*I now have all keywords associated with a top topic sorted by CTR. The gamma is the %probability that keyword belongs to that topic.*
+
+This gives me an answer: **bar stools** !!!!
+
+### Results
+
+  Well, how about this: *assuming* that all ads are equal, the places where their ads will have the most click through are those in the above table: bar stools, patio furniture, and so on.
+I know Target sells these things, so they should place their ads there, and expect instant, glorious success! (or close enough)
+
+  But given that all ads are probably *not* equal then I have recommend further study. What I suggest in that case is that they study the design of the ads that are placed at the above keywords (first rerunning the test on more real-time data to assure this is still the case), since these ads are so popular, and see if any of their design attributes are worth incoporating into Target ads.
+
+  
+### Conclusions
+
+![target image](2017-11-04.png)
+
+  It seems to me that keywords that are already probably very targeted (ie "target" --> target.com the destination and first organic result for most users, no pun intended...) by nature already have poor click through performance. This is probably okay to some extent as use are getting to target.com just by organic results (I know from a research Google Search that Target.com is indeed the top organic result as shown in the picture above, and results relating to Target Corporation fill the entire first screen), but even by comparison to searches where we would expect similar performance (ie. Walmart), "target" had terrible ad performance which fact may have Target concerned. However, I can't really overcome this limitation directly for "target" as a search, as I am entirely sure it is a problem if everyone just goes to the organic result.
+  
+  But we can do something else that is probably of even greater value. We now what keywords of target products have really good click through, so we know how to draw people in who weren't initially looking at for Target, but just for a single product. Design of ads on high click through keywords may also yield information valuable across all ads.
+  
+    This study was strong because topic modeling with LDA is actually a form of 'fuzzy clustering.' This means that words can occuring in multiple topics and reduces the number of assumptions that have to be made. However some assumptions were made in that the top topic was always assumed to be largely exclusive, I didn't really take into account that some websites are spilt across quite a number of topics: the gamma in the above table is around 40% for many suggesting that around 60% falls into other topics not considered. 
+    
+    The most likely error in all of this however is *sample bias*. It seems likely that the information we have is for a relatively small section of time, and therefore will be biased to a limited selection of ads present at that time.
+    
+*References:*
+
+http://tidytextmining.com/topicmodeling.html  -Fuzzy Clustering
+"Examining the Impact of Contextual Ambiguity on Search Advertising Keyword Performance"
+http://repository.cmu.edu/cgi/viewcontent.cgi?article=1400&context=heinzworks
