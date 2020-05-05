@@ -1,2 +1,2 @@
 # imperial-command
-Files from analytics projects and homework projects
+Imposing order by chaos.
